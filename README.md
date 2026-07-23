@@ -4,7 +4,7 @@ NutriAI generates a personalized **7-day, 3-meal plan in under 60 seconds**, tai
 clinical conditions, allergens/intolerances, diet, and age/sex-specific nutrient targets,
 built on a USDA FoodData Central food database.
 
-**Live app:** _add your Streamlit Community Cloud URL here after deploying_
+**Live app:** (https://nutriaibax423.streamlit.app/)
 
 ## Run locally (single command)
 
