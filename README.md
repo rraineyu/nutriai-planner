@@ -1,7 +1,5 @@
 # NutriAI — Automated Diet Plan Builder
 
-BAX-423 Big Data · Spring 2026 Final Project · UC Davis GSM
-
 NutriAI generates a personalized **7-day, 3-meal plan in under 60 seconds**, tailored to
 clinical conditions, allergens/intolerances, diet, and age/sex-specific nutrient targets,
 built on a USDA FoodData Central food database.
