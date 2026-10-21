@@ -104,6 +104,14 @@ section[data-testid="stSidebar"]{
 [data-testid="stMetricValue"]{ font-family:'Fraunces',serif; color:var(--sage-deep); }
 hr{ border-color:var(--line); }
 
+/* ---- page 1: profile form ---- */
+.hero{ text-align:center; margin:8px 0 18px; }
+.hero h1{ font-size:3rem !important; margin-bottom:.2rem !important; }
+.hero p{ color:var(--ink-soft); font-size:1.08rem; max-width:560px; margin:0 auto; }
+[data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"]{ display:none; }
+/* ---- page 2: plan header ---- */
+.plan-brand{ font-family:'Fraunces',Georgia,serif; font-weight:600; font-size:2rem; color:var(--ink); }
+.plan-brand span{ font-family:'Nunito',sans-serif; font-weight:600; font-size:1.05rem; color:var(--ink-soft); }
 /* ---- consolidated plan layout ---- */
 :root{ --sage-ink:#3F7652; --sage-ink-dark:#2E5A3D; }
 .summary-bar{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
@@ -150,8 +158,6 @@ for k,v in {"fb_state":None,"plan":None,"feedback_log":[],
 eng=get_engine()
 eng.load_feedback_state(st.session_state.fb_state)
 
-st.markdown("# 🍽️ NutriAI")
-st.markdown("##### Tell us your health needs and NutriAI will create a safe 7-day meal plan with nutrition analysis and explainable exclusions.")
 
 CONDS=["IBS","GERD","T2_Diabetes","Hypertension"]
 
@@ -232,78 +238,101 @@ def regenerate_meal(day_num, meal, foods):
         s["plan"], s["analysis"] = new_plan, new_an
         s["log"] = new_log.__dict__
 
-with st.sidebar:
-    st.markdown("## Build your plan")
-    st.caption("Tell us about yourself and your needs.")
+# ---------------- Page 1: the profile form ----------------
+DIET_LABELS={"nonveg":"No restrictions (eats everything)","pescatarian":"Pescatarian (fish, no meat)",
+             "vegetarian":"Vegetarian","vegan":"Vegan"}
+ALLERGEN_LABELS={"milk":"Milk","egg":"Egg","fish":"Fish","shellfish":"Shellfish",
+                 "tree_nut":"Tree nuts","peanut":"Peanuts","soy":"Soy",
+                 "wheat":"Wheat","gluten":"Gluten"}
+COND_LABELS={"IBS":"IBS","GERD":"GERD / acid reflux","T2_Diabetes":"Type 2 diabetes",
+             "Hypertension":"High blood pressure"}
+DEFAULT_PROFILE=dict(age=35,sex="female",kcal=2000,diet="nonveg",allergens=[],lact=False,
+                     gf=False,pork=False,conditions=[],na=0,gi=0,fish=0,technique="dnn")
+for k,v in {"view":"form","profile":dict(DEFAULT_PROFILE),"plan_error":None}.items():
+    if k not in st.session_state: st.session_state[k]=v
 
-    # Starting values for the form (users always build their own profile)
-    d=dict(conditions=[],allergens=[],diet="nonveg",kcal=2000,age=35,sex="female",
-           lact=False,pork=False,gf=False,fish=0,na=0,gi=0)
+def persona_from(pr):
+    return Persona(name="Custom profile",conditions=pr["conditions"],allergens=pr["allergens"],
+        diet=pr["diet"],kcal_target=pr["kcal"],age=pr["age"],sex=pr["sex"],
+        lactose_free=pr["lact"],no_pork=pr["pork"],gluten_free=pr["gf"],
+        require_fish_meals=pr["fish"],sodium_daily_cap=pr["na"],gi_max=pr["gi"],micro_priority=[])
 
-    st.markdown("### 1. About you")
-    c1,c2=st.columns(2)
-    age=c1.number_input("Age",10,100,d["age"])
-    sex=c2.selectbox("Sex",["female","male"],index=0 if d["sex"]=="female" else 1)
-    kcal=st.slider("Daily calorie goal",1200,3000,d["kcal"],50)
-
-    st.markdown("### 2. Food preferences")
-    # Internal values stay the same for the engine; users see friendly labels.
-    DIET_LABELS={"nonveg":"No restrictions (eats everything)","pescatarian":"Pescatarian (fish, no meat)",
-                 "vegetarian":"Vegetarian","vegan":"Vegan"}
-    diet=st.selectbox("Diet",list(DIET_LABELS),
-                      index=list(DIET_LABELS).index(d["diet"]),
-                      format_func=lambda k: DIET_LABELS[k])
-    ALLERGEN_LABELS={"milk":"Milk","egg":"Egg","fish":"Fish","shellfish":"Shellfish",
-                     "tree_nut":"Tree nuts","peanut":"Peanuts","soy":"Soy",
-                     "wheat":"Wheat","gluten":"Gluten"}
-    allergens=st.multiselect("Allergies to avoid",ALLERGEN_CHOICES,default=d["allergens"],
-                             format_func=lambda k: ALLERGEN_LABELS.get(k, k.replace("_"," ").capitalize()),
-                             placeholder="None")
-    # Two columns instead of three so labels don't get truncated ("Lacto…")
-    cc1,cc2=st.columns(2)
-    lact=cc1.checkbox("Lactose-free",d["lact"])
-    gf=cc2.checkbox("Gluten-free",d["gf"])
-    pork=cc1.checkbox("No pork",d["pork"])
-
-    st.markdown("### 3. Health needs")
-    COND_LABELS={"IBS":"IBS","GERD":"GERD / acid reflux","T2_Diabetes":"Type 2 diabetes",
-                 "Hypertension":"High blood pressure"}
-    conditions=st.multiselect("Conditions",CONDS,default=d["conditions"],
-                              format_func=lambda k: COND_LABELS.get(k,k),placeholder="None")
-
-    with st.expander("Advanced settings"):
-        st.caption("Optional. Use these if a doctor or dietitian has given you specific limits.")
-        na=st.slider("Sodium daily cap (mg, 0=off)",0,2500,d["na"],50)
-        gi=st.slider("Max glycemic index (0=off)",0,100,d["gi"],5)
-        fish=st.slider("Minimum fish meals/week",0,7,d["fish"])
-        plan_style=st.radio("Plan style",["dnn","faiss"],
-            format_func=lambda t: TECHNIQUE_LABELS[t],
-            help="How NutriAI picks foods for your plan.")
-        st.caption(TECHNIQUE_HELP[plan_style])
-    technique=plan_style
-
-    go=st.button("Create my 7-day plan",type="primary",width="stretch")
-
-persona=Persona(name="Custom profile",conditions=conditions,
-    allergens=allergens,diet=diet,kcal_target=kcal,age=age,sex=sex,lactose_free=lact,
-    no_pork=pork,gluten_free=gf,require_fish_meals=fish,sodium_daily_cap=na,gi_max=gi,
-    micro_priority=[])
-
-if go:
-    with st.spinner("Building your 7-day plan..."):
-        t0=time.time()
-        plan,log,an=eng.build_plan(persona,technique,seed=time.time_ns()%(1<<30),
-                                   avoid=st.session_state.skipped_foods,
-                                   prefer=st.session_state.saved_foods)
-        gt=time.time()-t0
+def make_plan(pr):
+    """Build a plan from a saved profile; go to the plan page if it worked."""
+    persona=persona_from(pr)
+    t0=time.time()
+    plan,log,an=eng.build_plan(persona,pr["technique"],seed=time.time_ns()%(1<<30),
+                               avoid=st.session_state.skipped_foods,
+                               prefer=st.session_state.saved_foods)
     if plan is None:
-        st.error("No foods match all of your restrictions. Try removing one restriction and create the plan again.")
-    else:
-        st.session_state.plan={"plan":plan,"log":log.__dict__,"analysis":an,
-            "persona":persona.__dict__,"gt":gt,"technique":technique}
-        st.session_state.plan_day="Day 1"
-        # Streamlit can't auto-close the sidebar, so nudge narrow-screen users
-        st.toast("Your 7-day plan is ready! On mobile, close the sidebar (<<) to see it.", icon="✅")
+        st.session_state.plan_error=("No foods match all of your restrictions. "
+                                     "Try removing one restriction and create the plan again.")
+        st.session_state.view="form"
+        return
+    st.session_state.plan={"plan":plan,"log":log.__dict__,"analysis":an,
+        "persona":persona.__dict__,"gt":time.time()-t0,"technique":pr["technique"]}
+    st.session_state.plan_day="Day 1"
+    st.session_state.plan_error=None
+    st.session_state.view="plan"
+
+def profile_page():
+    pr=st.session_state.profile
+    _,mid,_=st.columns([1,2.4,1])
+    with mid:
+        st.markdown('<div class="hero"><h1>🍽️ NutriAI</h1>'
+                    '<p>Tell us how you eat and any health needs. We\'ll build a 7-day meal plan '
+                    'with real portions, a grocery list, and a clear list of what we left out.</p></div>',
+                    unsafe_allow_html=True)
+        if st.session_state.plan_error:
+            st.error(st.session_state.plan_error)
+        with st.form("profile_form", border=False):
+            with st.container(border=True):
+                st.markdown("### 1. About you")
+                c1,c2=st.columns(2)
+                age=c1.number_input("Age",10,100,pr["age"])
+                sex=c2.selectbox("Sex",["female","male"],index=0 if pr["sex"]=="female" else 1,
+                                 format_func=str.capitalize)
+                kcal=st.slider("Daily calorie goal",1200,3000,pr["kcal"],50)
+            with st.container(border=True):
+                st.markdown("### 2. Food preferences")
+                diet=st.selectbox("Diet",list(DIET_LABELS),index=list(DIET_LABELS).index(pr["diet"]),
+                                  format_func=lambda k: DIET_LABELS[k])
+                allergens=st.multiselect("Allergies to avoid",ALLERGEN_CHOICES,default=pr["allergens"],
+                                         format_func=lambda k: ALLERGEN_LABELS.get(k,k.replace("_"," ").capitalize()),
+                                         placeholder="None")
+                cc1,cc2,cc3=st.columns(3)
+                lact=cc1.checkbox("Lactose-free",pr["lact"])
+                gf=cc2.checkbox("Gluten-free",pr["gf"])
+                pork=cc3.checkbox("No pork",pr["pork"])
+            with st.container(border=True):
+                st.markdown("### 3. Health needs")
+                conditions=st.multiselect("Conditions",CONDS,default=pr["conditions"],
+                                          format_func=lambda k: COND_LABELS.get(k,k),placeholder="None")
+                with st.expander("Advanced settings (optional)"):
+                    st.caption("Use these if a doctor or dietitian has given you specific limits.")
+                    na=st.slider("Sodium daily cap (mg, 0 = off)",0,2500,pr["na"],50)
+                    gi=st.slider("Max glycemic index (0 = off)",0,100,pr["gi"],5)
+                    fish=st.slider("Minimum fish meals per week",0,7,pr["fish"])
+                    technique=st.radio("Plan style",["dnn","faiss"],
+                        index=["dnn","faiss"].index(pr["technique"]),
+                        format_func=lambda t: TECHNIQUE_LABELS[t],
+                        captions=[TECHNIQUE_HELP["dnn"],TECHNIQUE_HELP["faiss"]])
+            submitted=st.form_submit_button("Create my 7-day plan",type="primary",width="stretch")
+        if submitted:
+            st.session_state.profile=dict(age=age,sex=sex,kcal=kcal,diet=diet,allergens=allergens,
+                lact=lact,gf=gf,pork=pork,conditions=conditions,na=na,gi=gi,fish=fish,technique=technique)
+            with st.spinner("Building your 7-day plan..."):
+                make_plan(st.session_state.profile)
+            st.rerun()
+        if st.session_state.plan and st.session_state.view=="form":
+            st.button("← Back to my plan",on_click=lambda: st.session_state.update(view="plan"),
+                      width="stretch")
+        st.caption("NutriAI provides general meal-planning guidance, not medical advice. If you have a "
+                   "health condition, check your plan with a registered dietitian or physician.")
+
+if st.session_state.view!="plan" or not st.session_state.plan:
+    profile_page()
+    st.stop()
 
 def on_save(day_num, meal):
     foods = st.session_state.plan["plan"][day_num-1]["meals"][meal]
@@ -326,6 +355,18 @@ def on_skip(day_num, meal):
     new_title = meal_title(meal, st.session_state.plan["plan"][day_num-1]["meals"][meal])
     st.session_state.feedback_log.append((title, "skipped"))
     st.toast(f"Swapped Day {day_num} {meal.lower()}: {new_title}.", icon="🔄")
+
+def go_edit(): st.session_state.view="form"
+def go_new_plan(): make_plan(st.session_state.profile)
+
+h1,h2=st.columns([3,2],vertical_alignment="center")
+h1.markdown('<div class="plan-brand">🍽️ NutriAI <span>· Your 7-day plan</span></div>',
+            unsafe_allow_html=True)
+with h2:
+    b1,b2=st.columns(2)
+    b1.button("✏️ Edit profile",on_click=go_edit,width="stretch")
+    b2.button("🔄 New plan",on_click=go_new_plan,width="stretch",
+              help="Build a fresh week with the same profile")
 
 tab_plan,tab_an,tab_groc,tab_excl=st.tabs(
     ["My plan 📝 ","Nutrition 📊","Grocery list 🛒","What we left out 🚫"])
@@ -381,9 +422,7 @@ def meal_card(day_num, meal, foods, saved):
 
 with tab_plan:
     if not state:
-        st.info("**Get started:** fill in your profile in the sidebar, then click "
-                "**Create my 7-day plan**.  \n"
-                "On a phone or narrow window, tap the **>>** arrow at the top left to open the sidebar.")
+        st.info("Create a plan to get started.")
     else:
         plan=state["plan"]; an=state["analysis"]
         summary_bar(state)
