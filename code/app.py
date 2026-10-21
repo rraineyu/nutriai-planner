@@ -1,15 +1,15 @@
 """
-app.py - NutriAI Streamlit application (BAX-423 final, full spec)
-Six core capabilities: clinical filtering, allergy exclusion, dietary preference,
-diversity engine, macro/micro RDA analysis, sub-60s generation. Plus explain
-feature, adaptive learning, PDF/CSV export, and a technique benchmark.
+app.py - NutriAI: personalized 7-day meal plan builder
+Builds a meal plan around a user's health conditions, allergies, and diet
+preferences, with nutrition analysis, explainable exclusions, adaptive
+feedback, and PDF/CSV export.
 Run: streamlit run code/app.py
 """
 import os, sys, time
 sys.path.insert(0, os.path.dirname(__file__))
 import pandas as pd
 import streamlit as st
-from engine import (NutriEngine, Persona, default_personas, NUTRIENTS, MACROS,
+from engine import (NutriEngine, Persona, NUTRIENTS, MACROS,
                     MICROS, rda_for, ALLERGEN_CHOICES)
 from export import plan_to_csv, plan_to_pdf
 
@@ -117,16 +117,40 @@ st.markdown("##### Tell us your health needs and NutriAI will create a safe 7-da
 CONDS=["IBS","GERD","T2_Diabetes","Hypertension"]
 
 TECHNIQUE_LABELS = {
-    "dnn": "DNN nutrition model",
+    "dnn": "Best nutrition fit (recommended)",
     "faiss": "Fast match"
 }
 TECHNIQUE_HELP = {
-    "dnn": "DNN nutrition model uses a feed-forward neural network scorer from the project.",
-    "faiss": "Fast match uses the embeddings + FAISS retrieval baseline from the project."
+    "dnn": "Uses NutriAI's neural network to pick foods that best match your nutrition targets.",
+    "faiss": "Finds similar foods quickly. Faster, but a looser nutrition fit."
 }
 
+# Brand prefixes from the synthetic food catalog. Stripped for display only;
+# the cleaner long-term fix is a generic-name column in the data.
+BRAND_PREFIXES = ["Golden Acre", "Healthy Harvest", "Garden Select", "GreenField",
+                  "TrueNorth", "PureFoods", "Heritage", "Wholesome", "Coastal", "Prime"]
+
+# Nutrients where staying UNDER the target is the goal (limits, not minimums)
+UPPER_LIMIT_NUTRIENTS = {"sodium_mg"}
+
+UNIT_LABELS = {"mg": "mg", "ug": "µg", "g": "g", "kcal": "kcal"}
+
+def nutrient_label(key):
+    """vitamin_b12_ug -> 'Vitamin B12 (µg)'"""
+    parts = str(key).split("_")
+    unit = UNIT_LABELS.get(parts[-1]) if len(parts) > 1 else None
+    words = parts[:-1] if unit else parts
+    name = " ".join(w.upper() if (len(w) <= 3 and any(ch.isdigit() for ch in w)) else w.capitalize()
+                    for w in words)
+    return f"{name} ({unit})" if unit else name
+
 def _clean_food_name(food):
-    return str(food.get("name", "")).split("(")[0].strip()
+    name = str(food.get("name", "")).split("(")[0].strip()
+    for brand in BRAND_PREFIXES:
+        if name.lower().startswith(brand.lower() + " "):
+            name = name[len(brand):].strip()
+            break
+    return name[:1].upper() + name[1:]
 
 def meal_title(meal, foods):
     """Create more specific, ingredient-aware meal names.
@@ -309,28 +333,19 @@ def plan_fit_summary(persona, analysis):
     if persona.get("diet") and persona.get("diet") != "nonveg":
         parts.append(f"stays {persona.get('diet')}")
     kcal = analysis.get("daily_avg", {}).get("energy_kcal", 0)
-    diversity = analysis.get("diversity_score", "-")
     base = "This plan " + "; ".join(parts) + "." if parts else "This plan is built around your profile and nutrition targets."
-    return f"{base} Daily average is about {kcal:.0f} calories with a diversity score of {diversity}."
+    return f"{base} It averages about {kcal:,.0f} calories a day, with a variety of foods across the week."
 
 def ingredient_line(foods):
     return ", ".join(_clean_food_name(f) for f in foods)
 
 with st.sidebar:
     st.markdown("## Build your plan")
-    st.caption("Start with a sample persona or enter your own needs.")
+    st.caption("Tell us about yourself and your needs.")
 
-    presets={p.name:p for p in default_personas()}
-    sel=st.selectbox("Start from",["Custom"]+list(presets.keys()))
-
-    if sel!="Custom":
-        b=presets[sel]
-        d=dict(conditions=b.conditions,allergens=b.allergens,diet=b.diet,kcal=b.kcal_target,
-               age=b.age,sex=b.sex,lact=b.lactose_free,pork=b.no_pork,gf=b.gluten_free,
-               fish=b.require_fish_meals,na=b.sodium_daily_cap,gi=b.gi_max)
-    else:
-        d=dict(conditions=[],allergens=[],diet="nonveg",kcal=2000,age=35,sex="female",
-               lact=False,pork=False,gf=False,fish=0,na=0,gi=0)
+    # Starting values for the form (users always build their own profile)
+    d=dict(conditions=[],allergens=[],diet="nonveg",kcal=2000,age=35,sex="female",
+           lact=False,pork=False,gf=False,fish=0,na=0,gi=0)
 
     st.markdown("### 1. About you")
     c1,c2=st.columns(2)
@@ -342,60 +357,77 @@ with st.sidebar:
     diet=st.selectbox("Diet",["nonveg","pescatarian","vegetarian","vegan"],
                       index=["nonveg","pescatarian","vegetarian","vegan"].index(d["diet"]))
     allergens=st.multiselect("Allergies to avoid",ALLERGEN_CHOICES,default=d["allergens"])
-    cc1,cc2,cc3=st.columns(3)
+    # Two columns instead of three so labels don't get truncated ("Lacto…")
+    cc1,cc2=st.columns(2)
     lact=cc1.checkbox("Lactose-free",d["lact"])
-    pork=cc2.checkbox("No pork",d["pork"])
-    gf=cc3.checkbox("Gluten-free",d["gf"])
+    gf=cc2.checkbox("Gluten-free",d["gf"])
+    pork=cc1.checkbox("No pork",d["pork"])
 
     st.markdown("### 3. Health needs")
     conditions=st.multiselect("Conditions",CONDS,default=d["conditions"])
 
     with st.expander("Advanced settings"):
-        st.caption("Most users can leave these as-is. They are included for the class demo and clinical constraints.")
+        st.caption("Optional. Use these if a doctor or dietitian has given you specific limits.")
         na=st.slider("Sodium daily cap (mg, 0=off)",0,2500,d["na"],50)
         gi=st.slider("Max glycemic index (0=off)",0,100,d["gi"],5)
         fish=st.slider("Minimum fish meals/week",0,7,d["fish"])
         plan_style=st.radio("Plan style",["dnn","faiss"],
             format_func=lambda t: TECHNIQUE_LABELS[t],
-            help="DNN nutrition model = neural network ranking. Fast match = embeddings + FAISS.")
+            help="How NutriAI picks foods for your plan.")
         st.caption(TECHNIQUE_HELP[plan_style])
     technique=plan_style
 
     go=st.button("Create my 7-day plan",type="primary",use_container_width=True)
 
-persona=Persona(name=sel if sel!="Custom" else "Custom profile",conditions=conditions,
+persona=Persona(name="Custom profile",conditions=conditions,
     allergens=allergens,diet=diet,kcal_target=kcal,age=age,sex=sex,lactose_free=lact,
     no_pork=pork,gluten_free=gf,require_fish_meals=fish,sodium_daily_cap=na,gi_max=gi,
-    micro_priority=presets[sel].micro_priority if sel!="Custom" else [])
+    micro_priority=[])
 
 if go:
-    with st.spinner("Filtering foods -> ranking -> assigning meals..."):
+    with st.spinner("Building your 7-day plan..."):
         t0=time.time()
-      
         plan,log,an=eng.build_plan(persona,technique)
-      
         gt=time.time()-t0
     if plan is None:
-        st.error("No foods remain after filtering. Loosen a constraint and retry.")
+        st.error("No foods match all of your restrictions. Try removing one restriction and create the plan again.")
     else:
         st.session_state.plan={"plan":plan,"log":log.__dict__,"analysis":an,
             "persona":persona.__dict__,"gt":gt,"technique":technique}
+        # Streamlit can't auto-close the sidebar, so nudge narrow-screen users
+        st.toast("Your 7-day plan is ready! On mobile, close the sidebar (<<) to see it.", icon="✅")
 
-tab_plan,tab_an,tab_excl,tab_bench=st.tabs(
-    ["My plan 📝 ","Nutrition 📊","Why excluded 🚫","Class benchmark 🔬"])
+tab_plan,tab_an,tab_excl=st.tabs(
+    ["My plan 📝 ","Nutrition 📊","Why excluded 🚫"])
 state=st.session_state.plan
 
 with tab_plan:
-    if not state: st.info("Set your profile and click **Generate 7-day plan**.")
+    if not state:
+        st.info("**Get started:** fill in your profile in the sidebar, then click "
+                "**Create my 7-day plan**.  \n"
+                "On a phone or narrow window, tap the **>>** arrow at the top left to open the sidebar.")
     else:
         plan=state["plan"]; an=state["analysis"]
         c1,c2,c3,c4=st.columns(4)
-        c1.metric("Generation time",f"{state['gt']:.2f}s","under 60s")
-        c2.metric("Diversity score",an["diversity_score"],"target >=0.7")
-        c3.metric("Foods (deduped)",f"{eng.n_dedup:,}")
+        da=an.get("daily_avg",{})
+        kcal_goal=state["persona"].get("kcal_target")
+        c1.metric("Avg calories/day",f"{da.get('energy_kcal',0):,.0f}",
+                  f"goal {kcal_goal:,}" if kcal_goal else None,delta_color="off")
+        c2.metric("Avg protein/day",f"{da.get('protein_g',0):.0f} g")
+        c3.metric("Avg fiber/day",f"{da.get('fiber_g',0):.0f} g")
         c4.metric("Fish meals",an.get("fish_meals",0))
+        # Small, right-aligned diversity score (kept subtle on purpose)
+        div=an.get("diversity_score")
+        if div is not None:
+            try: div_txt=f"{float(div):.2f}"
+            except (TypeError,ValueError): div_txt=str(div)
+            st.markdown(
+                f'<div style="text-align:right;font-size:0.8rem;color:var(--ink-soft);margin-top:-6px" '
+                f'title="How varied your foods are across the week. Higher means less repetition.">'
+                f'Diversity score: <b>{div_txt}</b></div>',
+                unsafe_allow_html=True)
         st.success(plan_fit_summary(state["persona"], an))
-        st.caption("Save or replace meals to help NutriAI adjust future recommendations when you regenerate the plan.")
+        st.caption("Save or skip meals to help NutriAI adjust future recommendations when you regenerate the plan.")
         st.markdown("---")
         csvb=plan_to_csv(plan); pdfb=plan_to_pdf(plan,state["persona"],an)
         e1,e2=st.columns(2)
@@ -428,7 +460,7 @@ with tab_plan:
 
                     with b1:
                         if st.button(
-                            "⭐ Save meal",
+                            "⭐ Save",
                             key=f"save_d{day['day']}_{meal}",
                             use_container_width=True
                         ):
@@ -440,15 +472,16 @@ with tab_plan:
 
                     with b2:
                         if st.button(
-                            "🔄 Replace meal",
+                            "👎 Skip",
                             key=f"replace_d{day['day']}_{meal}",
+                            help="Show fewer meals like this when you regenerate",
                             use_container_width=True
                         ):
                             for f in foods:
                                 eng.apply_feedback(f, False)
                             st.session_state.dnn_feedback = dict(eng.dnn_feedback)
-                            st.session_state.feedback_log.append((title, "replace requested"))
-                            st.toast("Alternative meal feature coming soon")
+                            st.session_state.feedback_log.append((title, "skipped"))
+                            st.toast(f"Got it. Regenerate to see fewer meals like {title}.")
             st.markdown("")
         if st.session_state.feedback_log:
             with st.expander("🧠 Adaptive learning log"):
@@ -478,22 +511,33 @@ with tab_an:
             "magnesium_mg": 400 if state["persona"]["sex"] == "male" else 310,
         }
         display_micros = MICROS + ["sodium_mg", "potassium_mg", "magnesium_mg"]
-        for m in display_micros:
+        # If the user set a sodium cap, that cap is their target
+        if state["persona"].get("sodium_daily_cap"):
+            target_overrides["sodium_mg"] = state["persona"]["sodium_daily_cap"]
+        # dict.fromkeys de-dupes in case MICROS already includes these
+        for m in dict.fromkeys(display_micros):
+            if m not in da:
+                continue
             tgt = target_overrides.get(m, rda.get(m, 0))
-
-            if m == "sodium_mg":
-                pct = 100 * da[m] / tgt if tgt else 0
-                status = "✅" if da[m] <= tgt else "⚠️ > target"
+            pct = 100 * da[m] / tgt if tgt else 0
+            if m in UPPER_LIMIT_NUTRIENTS:
+                # Limits: under target is good, over is the warning
+                status = "✅ Under limit" if da[m] <= tgt else "⚠️ Over limit"
             else:
-                pct = 100 * da[m] / tgt if tgt else 0
-                status = "✅" if pct >= 80 else "⚠️ <80%"
-            mrows.append({"Micronutrient":m,"Daily avg":round(da[m],2),"RDA":tgt,
-                          "% RDA":round(pct),"Status":"✅" if pct>=80 else "⚠️ <80%"})
+                status = "✅ Met" if pct >= 80 else "⚠️ Below 80%"
+            # (Bug fix: the old code computed `status` above, then ignored it here)
+            mrows.append({"Nutrient":nutrient_label(m),"Daily avg":round(da[m],1),
+                          "Target":tgt,"% of target":round(pct),"Status":status})
         st.dataframe(pd.DataFrame(mrows),use_container_width=True,hide_index=True)
-        flags=an.get("rda_flags",[])
-        st.markdown(f"### RDA gap flags ({len(flags)} day-nutrient below 80%)")
+        # Limit nutrients don't count as "gaps" when they're low
+        flags=[f for f in an.get("rda_flags",[]) if f.get("nutrient") not in UPPER_LIMIT_NUTRIENTS]
+        n_days=len({f.get("day") for f in flags})
+        st.markdown(f"### Nutrient gaps ({len(flags)} below 80% of target, across {n_days} days)")
         if flags:
-            st.dataframe(pd.DataFrame(flags),use_container_width=True,hide_index=True)
+            fdf=pd.DataFrame(flags).rename(columns={"day":"Day","nutrient":"Nutrient",
+                "got":"Actual","target":"Target","pct":"% of target"})
+            if "Nutrient" in fdf: fdf["Nutrient"]=fdf["Nutrient"].map(nutrient_label)
+            st.dataframe(fdf,use_container_width=True,hide_index=True)
             st.caption("Note: B12 and vitamin D are commonly supplemented, especially on "
                        "vegan/lactose-free diets - flags here are informational.")
         else: st.success("All tracked nutrients meet >=80% RDA every day.")
@@ -503,29 +547,23 @@ with tab_excl:
     else:
         log=state["log"]
         st.markdown("### Why foods were excluded")
-        st.caption("This explains what the app removed before building your plan. Showing up to 25 examples per stage.")
+        st.caption("This explains what the app removed before building your plan, based on your selections.")
         for stage,label in [("clinical","🩺 Clinical condition"),("allergy","⚠️ Allergen / intolerance"),
                             ("diet","🥬 Diet preference")]:
-            dct=log.get(stage,{})
+            dct=log.get(stage) or {}
+            if isinstance(dct,list):  # tolerate list-of-pairs logs too
+                dct=dict(dct)
             with st.expander(f"{label} - {len(dct):,} foods excluded"):
-                if not dct: st.write("None.")
-                for nm,reason in list(dct.items())[:25]:
-                    st.markdown(f'<span class="excl">• <b>{nm.split("(")[0].strip()}</b> - {reason}</span>',
-                                unsafe_allow_html=True)
-
-with tab_bench:
-    st.markdown("### Class benchmark")
-    st.caption("This tab is mainly for the BAX-423 project evaluation. Normal users do not need to change these settings.")
-    bp=os.path.join(os.path.dirname(__file__),"..","data","benchmark_results.csv")
-    if os.path.exists(bp):
-        bdf=pd.read_csv(bp); st.dataframe(bdf,use_container_width=True,hide_index=True)
-        summ=bdf.groupby("technique")[["goal_fit","diversity","latency_ms"]].mean().round(3)
-        st.dataframe(summ,use_container_width=True)
-        st.markdown("- **Embeddings + FAISS** nearest-neighbor retrieval (Lecture 5, Embeddings & Vectors)")
-        st.markdown("- **Reinforcement learning - Thompson bandit** over food groups (Lectures 8-9, RL)")
-        st.markdown("- **DNN ranking** - feed-forward neural network scorer + re-rank (Lecture 7/ML Ranking)")
-    else: st.info("Run `python code/benchmark.py` to populate results.")
+                if not dct:
+                    st.write("None.")
+                else:
+                    edf=pd.DataFrame(
+                        [{"Food":_clean_food_name({"name":nm}),"Reason":str(reason)} for nm,reason in dct.items()])
+                    # Summarize reasons first so the user sees *why*, not just a long list
+                    st.dataframe(edf["Reason"].value_counts().rename_axis("Reason").reset_index(name="Foods"),
+                                 use_container_width=True,hide_index=True)
+                    st.dataframe(edf,use_container_width=True,hide_index=True,height=300)
 
 st.markdown("---")
-st.caption("NutriAI is an educational project, not medical advice. Consult a registered "
-           "dietitian or physician for clinical nutrition decisions.")
+st.caption("NutriAI provides general meal-planning guidance, not medical advice. If you have a "
+           "health condition, check your plan with a registered dietitian or physician.")
