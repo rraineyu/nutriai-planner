@@ -10,7 +10,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 import pandas as pd
 import streamlit as st
 from engine import (NutriEngine, Persona, NUTRIENTS, MACROS,
-                    MICROS, rda_for, ALLERGEN_CHOICES)
+                    MICROS, rda_for, ALLERGEN_CHOICES,
+                    display_food_name, short_food_name, portion_label)
 from export import plan_to_csv, plan_to_pdf
 
 st.set_page_config(page_title="NutriAI - Diet Plan Builder", page_icon="🥗", layout="wide")
@@ -106,10 +107,13 @@ hr{ border-color:var(--line); }
 
 @st.cache_resource
 def get_engine(): return NutriEngine()
-for k,v in {"dnn_feedback":None,"plan":None,"feedback_log":[]}.items():
+# Each visitor keeps their own feedback in their session. The engine is shared
+# by everyone, so we load this visitor's feedback into it on every run.
+for k,v in {"fb_state":None,"plan":None,"feedback_log":[],
+            "skipped_foods":[],"saved_foods":[]}.items():
     if k not in st.session_state: st.session_state[k]=v
 eng=get_engine()
-if st.session_state.dnn_feedback: eng.dnn_feedback=dict(st.session_state.dnn_feedback)
+eng.load_feedback_state(st.session_state.fb_state)
 
 st.markdown("# 🍽️ NutriAI")
 st.markdown("##### Tell us your health needs and NutriAI will create a safe 7-day meal plan with nutrition analysis and explainable exclusions.")
@@ -124,11 +128,6 @@ TECHNIQUE_HELP = {
     "dnn": "Uses NutriAI's neural network to pick foods that best match your nutrition targets.",
     "faiss": "Finds similar foods quickly. Faster, but a looser nutrition fit."
 }
-
-# Brand prefixes from the synthetic food catalog. Stripped for display only;
-# the cleaner long-term fix is a generic-name column in the data.
-BRAND_PREFIXES = ["Golden Acre", "Healthy Harvest", "Garden Select", "GreenField",
-                  "TrueNorth", "PureFoods", "Heritage", "Wholesome", "Coastal", "Prime"]
 
 # Nutrients where staying UNDER the target is the goal (limits, not minimums)
 UPPER_LIMIT_NUTRIENTS = {"sodium_mg"}
@@ -145,174 +144,20 @@ def nutrient_label(key):
     return f"{name} ({unit})" if unit else name
 
 def _clean_food_name(food):
-    name = str(food.get("name", "")).split("(")[0].strip()
-    for brand in BRAND_PREFIXES:
-        if name.lower().startswith(brand.lower() + " "):
-            name = name[len(brand):].strip()
-            break
-    return name[:1].upper() + name[1:]
+    return display_food_name(food.get("name", ""))
 
 def meal_title(meal, foods):
-    """Create more specific, ingredient-aware meal names.
+    """Name the meal after what's in it, e.g. 'Salmon with quinoa & kale'."""
+    names = [short_food_name(f.get("name", "")) for f in foods]
+    if not names:
+        return meal
+    first, rest = names[0], [n[:1].lower() + n[1:] for n in names[1:]]
+    if not rest:
+        return first
+    if len(rest) == 1:
+        return f"{first} with {rest[0]}"
+    return f"{first} with {', '.join(rest[:-1])} & {rest[-1]}"
 
-    The earlier version used broad labels like "Protein Grain Plate," which made
-    many meals sound repeated even when the ingredients were different. This
-    version names meals from the actual ingredients so the weekly plan feels more
-    varied and more like a real meal-planning product.
-    """
-    names = " ".join(_clean_food_name(f).lower() for f in foods)
-
-    def has(*words):
-        return any(w in names for w in words)
-
-    # ----- Breakfast-style names -----
-    if meal == "Breakfast":
-        if has("oat milk") and has("blueberr"):
-            return "Blueberry Oat Milk Morning Bowl"
-        if has("oat milk") and has("banana"):
-            return "Banana Oat Milk Sunrise Bowl"
-        if has("oat milk"):
-            return "Creamy Oat Milk Breakfast"
-        if has("soy milk") and has("kiwi"):
-            return "Tropical Kiwi Soy Breakfast"
-        if has("soy milk") and has("strawberr"):
-            return "Strawberry Soy Protein Start"
-        if has("soy milk"):
-            return "Soy Protein Morning Bowl"
-        if has("almond milk"):
-            return "Light Almond Morning Bowl"
-        if has("lactose-free milk"):
-            return "Lactose-Free Morning Plate"
-        if has("oat") and has("avocado"):
-            return "Creamy Avocado Oat Bowl"
-        if has("oat") and has("banana"):
-            return "Banana Oat Energy Bowl"
-        if has("oat"):
-            return "Fiber-Rich Oat Breakfast"
-        if has("quinoa") and has("lemon"):
-            return "Bright Quinoa Citrus Bowl"
-        if has("buckwheat") and has("avocado"):
-            return "Nutty Buckwheat Avocado Bowl"
-        if has("buckwheat"):
-            return "Warm Buckwheat Breakfast Bowl"
-        if has("rice") and has("banana"):
-            return "Golden Banana Rice Bowl"
-        if has("blueberr"):
-            return "Blueberry Bright Start Bowl"
-        if has("kiwi"):
-            return "Kiwi Morning Refresh Plate"
-        if has("strawberr"):
-            return "Strawberry Sunrise Bowl"
-        if has("banana"):
-            return "Banana Sunrise Breakfast"
-        if has("orange", "lemon"):
-            return "Citrus Morning Plate"
-        return "Bright Start Breakfast Plate"
-
-    # ----- Ingredient-specific lunch/dinner names -----
-    if has("tofu") and has("rice"):
-        return "Garden Tofu Rice Bowl"
-    if has("tofu") and has("broccoli"):
-        return "Broccoli Tofu Power Bowl"
-    if has("tofu") and has("tomato"):
-        return "Savory Tofu Tomato Plate"
-    if has("tofu"):
-        return "Plant Protein Tofu Plate"
-
-    if has("tempeh") and has("broccoli"):
-        return "Tempeh Broccoli Power Plate"
-    if has("tempeh") and has("kale"):
-        return "Tempeh Kale Harvest Bowl"
-    if has("tempeh") and has("rice"):
-        return "Tempeh Rice Protein Bowl"
-    if has("tempeh"):
-        return "Savory Tempeh Harvest Plate"
-
-    if has("edamame") and has("sweet potato"):
-        return "Edamame Sweet Potato Bowl"
-    if has("edamame") and has("rice"):
-        return "Edamame Rice Power Bowl"
-    if has("edamame") and has("spinach"):
-        return "Green Edamame Protein Bowl"
-    if has("edamame"):
-        return "Edamame Power Plate"
-
-    if has("egg") and has("quinoa"):
-        return "Protein-Packed Quinoa Egg Plate"
-    if has("egg") and has("oat"):
-        return "Savory Egg Oat Protein Plate"
-    if has("egg") and has("green beans"):
-        return "Egg & Green Bean Protein Plate"
-    if has("egg"):
-        return "Savory Egg Protein Plate"
-
-    if has("pumpkin") and has("tortilla"):
-        return "Crunchy Southwest Seed Plate"
-    if has("pumpkin") and has("kale"):
-        return "Crunchy Kale Seed Bowl"
-    if has("pumpkin") and has("spinach"):
-        return "Spinach Pumpkin Seed Power Bowl"
-    if has("pumpkin"):
-        return "Mineral-Rich Pumpkin Seed Plate"
-
-    if has("almond") and has("buckwheat"):
-        return "Almond Buckwheat Crunch Bowl"
-    if has("almond") and has("broccoli"):
-        return "Almond Broccoli Garden Plate"
-    if has("almond") and has("spinach"):
-        return "Almond Spinach Power Plate"
-    if has("almond"):
-        return "Almond Crunch Protein Plate"
-
-    if has("walnut") and has("buckwheat"):
-        return "Walnut Buckwheat Harvest Bowl"
-    if has("walnut") and has("zucchini"):
-        return "Walnut Zucchini Garden Plate"
-    if has("walnut") and has("sweet potato"):
-        return "Walnut Sweet Potato Plate"
-    if has("walnut"):
-        return "Toasty Walnut Energy Plate"
-
-    if has("quinoa") and has("kale"):
-        return "Quinoa Kale Wellness Bowl"
-    if has("quinoa"):
-        return "Quinoa Garden Bowl"
-    if has("buckwheat") and has("sweet potato"):
-        return "Buckwheat Sweet Potato Bowl"
-    if has("buckwheat"):
-        return "Nutty Buckwheat Grain Bowl"
-    if has("rice") and has("spinach"):
-        return "Spinach Rice Garden Bowl"
-    if has("rice") and has("tomato"):
-        return "Tomato Rice Garden Plate"
-    if has("rice"):
-        return "Simple Rice Garden Bowl"
-    if has("corn tortilla"):
-        return "Warm Tortilla Protein Plate"
-    if has("sweet potato"):
-        return "Harvest Sweet Potato Plate"
-
-    if has("broccoli") and has("green beans"):
-        return "Green Garden Vegetable Plate"
-    if has("broccoli"):
-        return "Broccoli Wellness Plate"
-    if has("kale") and has("spinach"):
-        return "Leafy Greens Power Bowl"
-    if has("kale"):
-        return "Kale Harvest Bowl"
-    if has("spinach"):
-        return "Spinach Garden Bowl"
-    if has("zucchini"):
-        return "Zucchini Garden Plate"
-    if has("tomato"):
-        return "Tomato Garden Plate"
-
-    # Meal-type fallback, still more natural than generic repeated labels.
-    if meal == "Lunch":
-        return "Midday Harvest Plate"
-    if meal == "Dinner":
-        return "Evening Garden Bowl"
-    return "NutriAI Signature Meal"
 def plan_fit_summary(persona, analysis):
     """Short personalized summary shown after generation."""
     parts = []
@@ -337,7 +182,20 @@ def plan_fit_summary(persona, analysis):
     return f"{base} It averages about {kcal:,.0f} calories a day, with a variety of foods across the week."
 
 def ingredient_line(foods):
-    return ", ".join(_clean_food_name(f) for f in foods)
+    return ", ".join(f"{_clean_food_name(f)} ({portion_label(f)})" for f in foods)
+
+def regenerate_meal(day_num, meal, foods):
+    """Swap one meal for a new one, keeping the rest of the week."""
+    st.session_state.skipped_foods = sorted(set(st.session_state.skipped_foods)
+                                            | {f["_base_food"] for f in foods})
+    s = st.session_state.plan
+    new_plan, new_log, new_an = eng.build_plan(
+        Persona(**s["persona"]), s["technique"], seed=time.time_ns() % (1 << 30),
+        avoid=st.session_state.skipped_foods, prefer=st.session_state.saved_foods,
+        locked_plan=s["plan"], regen={(day_num, meal)})
+    if new_plan is not None:
+        s["plan"], s["analysis"] = new_plan, new_an
+        s["log"] = new_log.__dict__
 
 with st.sidebar:
     st.markdown("## Build your plan")
@@ -377,7 +235,7 @@ with st.sidebar:
         st.caption(TECHNIQUE_HELP[plan_style])
     technique=plan_style
 
-    go=st.button("Create my 7-day plan",type="primary",use_container_width=True)
+    go=st.button("Create my 7-day plan",type="primary",width="stretch")
 
 persona=Persona(name="Custom profile",conditions=conditions,
     allergens=allergens,diet=diet,kcal_target=kcal,age=age,sex=sex,lactose_free=lact,
@@ -387,7 +245,9 @@ persona=Persona(name="Custom profile",conditions=conditions,
 if go:
     with st.spinner("Building your 7-day plan..."):
         t0=time.time()
-        plan,log,an=eng.build_plan(persona,technique)
+        plan,log,an=eng.build_plan(persona,technique,seed=time.time_ns()%(1<<30),
+                                   avoid=st.session_state.skipped_foods,
+                                   prefer=st.session_state.saved_foods)
         gt=time.time()-t0
     if plan is None:
         st.error("No foods match all of your restrictions. Try removing one restriction and create the plan again.")
@@ -396,6 +256,28 @@ if go:
             "persona":persona.__dict__,"gt":gt,"technique":technique}
         # Streamlit can't auto-close the sidebar, so nudge narrow-screen users
         st.toast("Your 7-day plan is ready! On mobile, close the sidebar (<<) to see it.", icon="✅")
+
+def on_save(day_num, meal):
+    foods = st.session_state.plan["plan"][day_num-1]["meals"][meal]
+    for f in foods:
+        eng.apply_feedback(f, True)
+    st.session_state.fb_state = eng.feedback_state()
+    st.session_state.saved_foods = sorted(set(st.session_state.saved_foods)
+                                          | {f["_base_food"] for f in foods})
+    title = meal_title(meal, foods)
+    st.session_state.feedback_log.append((title, "saved"))
+    st.toast(f"Saved: {title}. NutriAI will use these foods more in your next plans.", icon="⭐")
+
+def on_skip(day_num, meal):
+    foods = st.session_state.plan["plan"][day_num-1]["meals"][meal]
+    for f in foods:
+        eng.apply_feedback(f, False)
+    st.session_state.fb_state = eng.feedback_state()
+    title = meal_title(meal, foods)
+    regenerate_meal(day_num, meal, foods)
+    new_title = meal_title(meal, st.session_state.plan["plan"][day_num-1]["meals"][meal])
+    st.session_state.feedback_log.append((title, "skipped"))
+    st.toast(f"Swapped Day {day_num} {meal.lower()}: {new_title}.", icon="🔄")
 
 tab_plan,tab_an,tab_excl=st.tabs(
     ["My plan 📝 ","Nutrition 📊","Why excluded 🚫"])
@@ -427,66 +309,65 @@ with tab_plan:
                 f'Diversity score: <b>{div_txt}</b></div>',
                 unsafe_allow_html=True)
         st.success(plan_fit_summary(state["persona"], an))
-        st.caption("Save or skip meals to help NutriAI adjust future recommendations when you regenerate the plan.")
+        st.caption("Tap **Swap** to replace any meal you don't like, or **Save** to see those foods more often.")
         st.markdown("---")
         csvb=plan_to_csv(plan); pdfb=plan_to_pdf(plan,state["persona"],an)
         e1,e2=st.columns(2)
-        e1.download_button("⬇ Download CSV",csvb,"nutriai_plan.csv","text/csv",use_container_width=True)
-        e2.download_button("⬇ Download PDF",pdfb,"nutriai_plan.pdf","application/pdf",use_container_width=True)
+        e1.download_button("⬇ Download CSV",csvb,"nutriai_plan.csv","text/csv",width="stretch")
+        e2.download_button("⬇ Download PDF",pdfb,"nutriai_plan.pdf","application/pdf",width="stretch")
         st.markdown("---")
+        saved=set(st.session_state.saved_foods)
         for day in plan:
             st.markdown(f'<span class="daychip">Day {day["day"]}</span>',unsafe_allow_html=True)
             cols=st.columns(3)
             meal_style={"Breakfast":("🥣","var(--peach)"),
                         "Lunch":("🥗","var(--sage)"),
                         "Dinner":("🍲","var(--lavender)")}
-            for col,(meal,foods) in zip(cols,day["meals"].items()):
+            main_meals=[(m,day["meals"][m]) for m in ("Breakfast","Lunch","Dinner") if m in day["meals"]]
+            for col,(meal,foods) in zip(cols,main_meals):
                 with col:
                     emoji,accent=meal_style.get(meal,("🍽️","var(--sage)"))
                     title = meal_title(meal, foods)
                     total_kcal = sum(float(f["energy_kcal"])*float(f["_scale"]) for f in foods)
                     total_protein = sum(float(f["protein_g"])*float(f["_scale"]) for f in foods)
-                    avg_gi = sum(float(f.get("glycemic_index",0) or 0) for f in foods) / max(len(foods),1)
                     st.markdown(f"#### {emoji} {meal}")
                     st.markdown(
                         f'<div class="meal-card" style="border-left-color:{accent}">'
                         f'<b style="font-size:1.05rem">{title}</b><br>'
-                        f'<small><b>Includes:</b> {ingredient_line(foods)}</small><br>'
-                        f'<small>{total_kcal:.0f} kcal · {total_protein:.0f}g protein · avg GI {avg_gi:.0f}</small>'
+                        f'<small>{ingredient_line(foods)}</small><br>'
+                        f'<small>{total_kcal:.0f} kcal · {total_protein:.0f}g protein</small>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
+                    is_saved = bool(foods) and all(f["_base_food"] in saved for f in foods)
                     b1, b2 = st.columns(2)
-
-                    with b1:
-                        if st.button(
-                            "⭐ Save",
-                            key=f"save_d{day['day']}_{meal}",
-                            use_container_width=True
-                        ):
-                            for f in foods:
-                                eng.apply_feedback(f, True)
-                            st.session_state.dnn_feedback = dict(eng.dnn_feedback)
-                            st.session_state.feedback_log.append((title, "saved meal"))
-                            st.toast(f"Saved: {title}")
-
-                    with b2:
-                        if st.button(
-                            "👎 Skip",
-                            key=f"replace_d{day['day']}_{meal}",
-                            help="Show fewer meals like this when you regenerate",
-                            use_container_width=True
-                        ):
-                            for f in foods:
-                                eng.apply_feedback(f, False)
-                            st.session_state.dnn_feedback = dict(eng.dnn_feedback)
-                            st.session_state.feedback_log.append((title, "skipped"))
-                            st.toast(f"Got it. Regenerate to see fewer meals like {title}.")
+                    b1.button("⭐ Saved" if is_saved else "⭐ Save",
+                              key=f"save_d{day['day']}_{meal}",
+                              help="Use these foods more often in your plans",
+                              on_click=on_save, args=(day["day"], meal),
+                              disabled=is_saved, width="stretch")
+                    b2.button("🔄 Swap",
+                              key=f"swap_d{day['day']}_{meal}",
+                              help="Replace this meal with a different one",
+                              on_click=on_skip, args=(day["day"], meal),
+                              width="stretch")
+            snack=day["meals"].get("Snack")
+            if snack:
+                skcal=sum(float(f["energy_kcal"])*float(f["_scale"]) for f in snack)
+                st.markdown(
+                    f'<div style="margin-top:6px;font-size:0.9rem;color:var(--ink-soft)">'
+                    f'🍎 <b>Snack:</b> {ingredient_line(snack)} · {skcal:.0f} kcal</div>',
+                    unsafe_allow_html=True)
             st.markdown("")
         if st.session_state.feedback_log:
-            with st.expander("🧠 Adaptive learning log"):
-                st.caption("Your ratings update the adaptive recommender. Regenerate to see the plan shift toward liked foods.")
+            with st.expander("🧠 Your feedback"):
+                st.caption("Saved foods show up more often in your next plans. "
+                           "Swapped meals are replaced and those foods are left out.")
                 for nm,act in st.session_state.feedback_log[-12:]: st.write(f"• {act}: {nm}")
+                if st.button("Reset my feedback", key="reset_fb"):
+                    for k in ("fb_state","feedback_log","skipped_foods","saved_foods"):
+                        st.session_state[k] = None if k=="fb_state" else []
+                    st.rerun()
 
 with tab_an:
     if not state: st.info("Generate a plan to see nutrient analysis.")
@@ -528,7 +409,7 @@ with tab_an:
             # (Bug fix: the old code computed `status` above, then ignored it here)
             mrows.append({"Nutrient":nutrient_label(m),"Daily avg":round(da[m],1),
                           "Target":tgt,"% of target":round(pct),"Status":status})
-        st.dataframe(pd.DataFrame(mrows),use_container_width=True,hide_index=True)
+        st.dataframe(pd.DataFrame(mrows),width="stretch",hide_index=True)
         # Limit nutrients don't count as "gaps" when they're low
         flags=[f for f in an.get("rda_flags",[]) if f.get("nutrient") not in UPPER_LIMIT_NUTRIENTS]
         n_days=len({f.get("day") for f in flags})
@@ -537,7 +418,7 @@ with tab_an:
             fdf=pd.DataFrame(flags).rename(columns={"day":"Day","nutrient":"Nutrient",
                 "got":"Actual","target":"Target","pct":"% of target"})
             if "Nutrient" in fdf: fdf["Nutrient"]=fdf["Nutrient"].map(nutrient_label)
-            st.dataframe(fdf,use_container_width=True,hide_index=True)
+            st.dataframe(fdf,width="stretch",hide_index=True)
             st.caption("Note: B12 and vitamin D are commonly supplemented, especially on "
                        "vegan/lactose-free diets - flags here are informational.")
         else: st.success("All tracked nutrients meet >=80% RDA every day.")
@@ -549,20 +430,23 @@ with tab_excl:
         st.markdown("### Why foods were excluded")
         st.caption("This explains what the app removed before building your plan, based on your selections.")
         for stage,label in [("clinical","🩺 Clinical condition"),("allergy","⚠️ Allergen / intolerance"),
-                            ("diet","🥬 Diet preference")]:
+                            ("diet","🥬 Diet preference"),("skipped","🔄 Foods you swapped out")]:
             dct=log.get(stage) or {}
             if isinstance(dct,list):  # tolerate list-of-pairs logs too
                 dct=dict(dct)
-            with st.expander(f"{label} - {len(dct):,} foods excluded"):
-                if not dct:
+            if stage=="skipped" and not dct:
+                continue
+            # The database has many brand versions of each food; list each food once.
+            edf=pd.DataFrame([{"Food":short_food_name(nm),"Reason":str(reason)}
+                              for nm,reason in dct.items()],columns=["Food","Reason"])
+            edf=edf.drop_duplicates("Food").sort_values("Food").reset_index(drop=True)
+            n=len(edf)
+            with st.expander(f"{label} - {n} food{'s' if n!=1 else ''} excluded"):
+                if not n:
                     st.write("None.")
                 else:
-                    edf=pd.DataFrame(
-                        [{"Food":_clean_food_name({"name":nm}),"Reason":str(reason)} for nm,reason in dct.items()])
-                    # Summarize reasons first so the user sees *why*, not just a long list
-                    st.dataframe(edf["Reason"].value_counts().rename_axis("Reason").reset_index(name="Foods"),
-                                 use_container_width=True,hide_index=True)
-                    st.dataframe(edf,use_container_width=True,hide_index=True,height=300)
+                    st.dataframe(edf,width="stretch",hide_index=True,
+                                 height=min(38+35*n,320))
 
 st.markdown("---")
 st.caption("NutriAI provides general meal-planning guidance, not medical advice. If you have a "
