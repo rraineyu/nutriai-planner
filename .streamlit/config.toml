@@ -1,0 +1,7 @@
+[theme]
+# NutriAI colors: sage green accents on a warm cream background
+base = "light"
+primaryColor = "#3F7652"
+backgroundColor = "#FBF8F3"
+secondaryBackgroundColor = "#F1ECE3"
+textColor = "#3F362B"
