@@ -35,7 +35,9 @@ h1,h2,h3,h4 { font-family:'Fraunces',Georgia,serif !important; letter-spacing:-0
    radial-gradient(700px 600px at 70% 100%, var(--sky-bg) 0%, transparent 55%),
    linear-gradient(180deg,var(--cream) 0%, var(--cream2) 100%);
    background-attachment:fixed; }
-.block-container { padding-top:1.6rem; max-width:1180px; }
+.block-container { padding-top:3.6rem; max-width:1180px; }
+/* Streamlit's top bar: transparent so it never paints over the page */
+header[data-testid="stHeader"]{ background:transparent; }
 
 /* big title */
 h1 { font-size:2.7rem !important; }
