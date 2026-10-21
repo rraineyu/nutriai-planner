@@ -1,17 +1,18 @@
-"""export.py - CSV and PDF export (capability: output). Uses fpdf2 (no system deps)."""
+"""export.py - CSV and PDF export of a meal plan. Uses fpdf2 (no system deps)."""
 import io, csv
 from fpdf import FPDF
+from engine import display_food_name, portion_label
 
 def plan_to_csv(plan) -> bytes:
     buf=io.StringIO(); w=csv.writer(buf)
-    w.writerow(["day","meal","food","portion_g","kcal","protein_g","carb_g","fat_g",
+    w.writerow(["day","meal","food","amount","portion_g","kcal","protein_g","carb_g","fat_g",
                 "fiber_g","sugar_g","sodium_mg","iron_mg","calcium_mg","vitamin_b12_ug",
                 "vitamin_d_ug","zinc_mg","glycemic_index"])
     for d in plan:
         for meal,foods in d["meals"].items():
             for f in foods:
                 s=f["_scale"]
-                w.writerow([d["day"],meal,f["name"],f["portion_g"],
+                w.writerow([d["day"],meal,display_food_name(f["name"]),portion_label(f),f["portion_g"],
                     round(f["energy_kcal"]*s,1),round(f["protein_g"]*s,1),
                     round(f["carb_g"]*s,1),round(f["fat_g"]*s,1),round(f["fiber_g"]*s,1),
                     round(f["sugar_g"]*s,1),round(f["sodium_mg"]*s,1),
@@ -27,17 +28,12 @@ def plan_to_pdf(plan, persona, analysis) -> bytes:
     pdf.set_auto_page_break(auto=True, margin=10)
     pdf.add_page()
 
-    def clean_name(food):
-        return str(food.get("name", "")).split("(")[0].strip()
-
-    def meal_text(foods):
+    def meal_text(foods, prefix=""):
         lines = []
         for f in foods:
             s = float(f.get("_scale", 1))
             kcal = float(f.get("energy_kcal", 0)) * s
-            protein = float(f.get("protein_g", 0)) * s
-            gi = f.get("glycemic_index", "-")
-            lines.append(f"{clean_name(f)} ({kcal:.0f} kcal," f"{protein:.0f}g protein," f"GI {gi:.0f})")
+            lines.append(f"{prefix}{display_food_name(f.get('name',''))}, {portion_label(f)} ({kcal:.0f} kcal)")
         return "\n".join(lines)
 
     # Title
@@ -71,7 +67,7 @@ def plan_to_pdf(plan, persona, analysis) -> bytes:
     day_w = 35
     meal_w = 82
     header_h = 12
-    row_h = 24
+    row_h = 28
 
     # Header row
     pdf.set_xy(left, top)
@@ -114,6 +110,9 @@ def plan_to_pdf(plan, persona, analysis) -> bytes:
         x = left + day_w
         for meal in ["Breakfast", "Lunch", "Dinner"]:
             foods = d["meals"].get(meal, [])
+            text = meal_text(foods)
+            if meal == "Dinner" and d["meals"].get("Snack"):
+                text += "\n" + meal_text(d["meals"]["Snack"], prefix="Snack: ")
 
             # Draw empty cell border
             pdf.set_xy(x, y)
@@ -122,7 +121,7 @@ def plan_to_pdf(plan, persona, analysis) -> bytes:
             # Add text inside cell
             pdf.set_xy(x + 2, y + 3)
             pdf.set_font("Helvetica", "", 7.5)
-            pdf.multi_cell(meal_w - 4, 4, _c(meal_text(foods)))
+            pdf.multi_cell(meal_w - 4, 4, _c(text))
 
             x += meal_w
 
@@ -141,7 +140,7 @@ def plan_to_pdf(plan, persona, analysis) -> bytes:
             f"Daily average: {da['energy_kcal']:.0f} kcal, "
             f"{da['protein_g']:.0f}g protein, {da['carb_g']:.0f}g carbs, "
             f"{da['fat_g']:.0f}g fat, {da['fiber_g']:.0f}g fiber. "
-            "Educational project only, not medical advice."
+            "General meal-planning guidance, not medical advice."
         ),
     )
 
