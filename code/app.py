@@ -35,7 +35,7 @@ h1,h2,h3,h4 { font-family:'Fraunces',Georgia,serif !important; letter-spacing:-0
    radial-gradient(700px 600px at 70% 100%, var(--sky-bg) 0%, transparent 55%),
    linear-gradient(180deg,var(--cream) 0%, var(--cream2) 100%);
    background-attachment:fixed; }
-.block-container { padding-top:2.2rem; max-width:1180px; }
+.block-container { padding-top:1.6rem; max-width:1180px; }
 
 /* big title */
 h1 { font-size:2.7rem !important; }
@@ -104,10 +104,21 @@ section[data-testid="stSidebar"]{
 [data-testid="stMetricValue"]{ font-family:'Fraunces',serif; color:var(--sage-deep); }
 hr{ border-color:var(--line); }
 
-/* ---- page 1: profile form ---- */
-.hero{ text-align:center; margin:8px 0 18px; }
-.hero h1{ font-size:3rem !important; margin-bottom:.2rem !important; }
-.hero p{ color:var(--ink-soft); font-size:1.08rem; max-width:560px; margin:0 auto; }
+/* ---- page 1: profile form (fits one screen) ---- */
+.hero{ text-align:center; margin:0 0 14px; }
+.hero h1{ font-size:2.5rem !important; margin:0 !important; padding:0 0 .2rem !important; }
+.hero p{ color:var(--ink-soft); font-size:1rem; margin:0; }
+.sec-label{ font-size:.8rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--sage-ink); padding-bottom:8px; margin-bottom:4px; border-bottom:1px solid var(--line); }
+.form-note{ text-align:center; color:var(--ink-soft); font-size:.82rem; margin-top:8px; }
+/* the Create button: your green, not Streamlit red */
+.stFormSubmitButton>button{ border-radius:14px; min-height:50px; font-weight:700; font-size:1.05rem;
+  background:var(--sage-ink) !important; border:none !important; color:#fff !important; }
+.stFormSubmitButton>button:hover{ background:var(--sage-ink-dark) !important; }
+/* sliders and selected pills in green too */
+[data-testid="stSlider"] [role="slider"]{ background:var(--sage-ink) !important; }
+[data-testid="stPills"] button[kind="pillsActive"]{ background:var(--sage-bg) !important;
+  border-color:var(--sage-ink) !important; color:var(--sage-ink-dark) !important; }
 [data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"]{ display:none; }
 /* ---- page 2: plan header ---- */
 .plan-brand{ font-family:'Fraunces',Georgia,serif; font-weight:600; font-size:2rem; color:var(--ink); }
@@ -276,59 +287,64 @@ def make_plan(pr):
     st.session_state.view="plan"
 
 def profile_page():
+    """Page 1: the whole form on one screen, three sections side by side."""
     pr=st.session_state.profile
-    _,mid,_=st.columns([1,2.4,1])
-    with mid:
-        st.markdown('<div class="hero"><h1>🍽️ NutriAI</h1>'
-                    '<p>Tell us how you eat and any health needs. We\'ll build a 7-day meal plan '
-                    'with real portions, a grocery list, and a clear list of what we left out.</p></div>',
-                    unsafe_allow_html=True)
-        if st.session_state.plan_error:
-            st.error(st.session_state.plan_error)
-        with st.form("profile_form", border=False):
-            with st.container(border=True):
-                st.markdown("### 1. About you")
-                c1,c2=st.columns(2)
-                age=c1.number_input("Age",10,100,pr["age"])
-                sex=c2.selectbox("Sex",["female","male"],index=0 if pr["sex"]=="female" else 1,
-                                 format_func=str.capitalize)
-                kcal=st.slider("Daily calorie goal",1200,3000,pr["kcal"],50)
-            with st.container(border=True):
-                st.markdown("### 2. Food preferences")
-                diet=st.selectbox("Diet",list(DIET_LABELS),index=list(DIET_LABELS).index(pr["diet"]),
-                                  format_func=lambda k: DIET_LABELS[k])
-                allergens=st.multiselect("Allergies to avoid",ALLERGEN_CHOICES,default=pr["allergens"],
-                                         format_func=lambda k: ALLERGEN_LABELS.get(k,k.replace("_"," ").capitalize()),
-                                         placeholder="None")
-                cc1,cc2,cc3=st.columns(3)
-                lact=cc1.checkbox("Lactose-free",pr["lact"])
-                gf=cc2.checkbox("Gluten-free",pr["gf"])
-                pork=cc3.checkbox("No pork",pr["pork"])
-            with st.container(border=True):
-                st.markdown("### 3. Health needs")
-                conditions=st.multiselect("Conditions",CONDS,default=pr["conditions"],
-                                          format_func=lambda k: COND_LABELS.get(k,k),placeholder="None")
-                with st.expander("Advanced settings (optional)"):
-                    st.caption("Use these if a doctor or dietitian has given you specific limits.")
-                    na=st.slider("Sodium daily cap (mg, 0 = off)",0,2500,pr["na"],50)
-                    gi=st.slider("Max glycemic index (0 = off)",0,100,pr["gi"],5)
-                    fish=st.slider("Minimum fish meals per week",0,7,pr["fish"])
-                    technique=st.radio("Plan style",["dnn","faiss"],
-                        index=["dnn","faiss"].index(pr["technique"]),
-                        format_func=lambda t: TECHNIQUE_LABELS[t],
-                        captions=[TECHNIQUE_HELP["dnn"],TECHNIQUE_HELP["faiss"]])
-            submitted=st.form_submit_button("Create my 7-day plan",type="primary",width="stretch")
-        if submitted:
-            st.session_state.profile=dict(age=age,sex=sex,kcal=kcal,diet=diet,allergens=allergens,
-                lact=lact,gf=gf,pork=pork,conditions=conditions,na=na,gi=gi,fish=fish,technique=technique)
-            with st.spinner("Building your 7-day plan..."):
-                make_plan(st.session_state.profile)
-            st.rerun()
-        if st.session_state.plan and st.session_state.view=="form":
-            st.button("← Back to my plan",on_click=lambda: st.session_state.update(view="plan"),
-                      width="stretch")
-        st.caption("NutriAI provides general meal-planning guidance, not medical advice. If you have a "
-                   "health condition, check your plan with a registered dietitian or physician.")
+    st.markdown('<div class="hero"><h1>🍽️ NutriAI</h1>'
+                '<p>Tell us how you eat. We\'ll build a 7-day meal plan with real portions and a grocery list.</p></div>',
+                unsafe_allow_html=True)
+    if st.session_state.plan_error:
+        st.error(st.session_state.plan_error)
+    AVOID_OPTS={"lact":"Lactose-free","gf":"Gluten-free","pork":"No pork"}
+    with st.form("profile_form", border=False):
+        c1,c2,c3=st.columns(3,gap="medium")
+        with c1, st.container(border=True):
+            st.markdown('<div class="sec-label">1 · About you</div>',unsafe_allow_html=True)
+            a1,a2=st.columns(2)
+            age=a1.number_input("Age",10,100,pr["age"])
+            sex=a2.selectbox("Sex",["female","male"],index=0 if pr["sex"]=="female" else 1,
+                             format_func=str.capitalize)
+            kcal=st.slider("Daily calorie goal",1200,3000,pr["kcal"],50,format="%d kcal")
+        with c2, st.container(border=True):
+            st.markdown('<div class="sec-label">2 · Food preferences</div>',unsafe_allow_html=True)
+            diet=st.selectbox("Diet",list(DIET_LABELS),index=list(DIET_LABELS).index(pr["diet"]),
+                              format_func=lambda k: DIET_LABELS[k])
+            allergens=st.multiselect("Allergies to avoid",ALLERGEN_CHOICES,default=pr["allergens"],
+                                     format_func=lambda k: ALLERGEN_LABELS.get(k,k.replace("_"," ").capitalize()),
+                                     placeholder="None")
+            also=st.pills("Also",list(AVOID_OPTS),selection_mode="multi",
+                          default=[k for k in AVOID_OPTS if pr[k]],
+                          format_func=lambda k: AVOID_OPTS[k],label_visibility="collapsed")
+        with c3, st.container(border=True):
+            st.markdown('<div class="sec-label">3 · Health needs</div>',unsafe_allow_html=True)
+            conditions=st.multiselect("Conditions",CONDS,default=pr["conditions"],
+                                      format_func=lambda k: COND_LABELS.get(k,k),placeholder="None")
+            with st.expander("Advanced settings (optional)"):
+                st.caption("Use these if a doctor or dietitian has given you specific limits.")
+                na=st.slider("Sodium daily cap (mg, 0 = off)",0,2500,pr["na"],50)
+                gi=st.slider("Max glycemic index (0 = off)",0,100,pr["gi"],5)
+                fish=st.slider("Minimum fish meals per week",0,7,pr["fish"])
+                technique=st.radio("Plan style",["dnn","faiss"],
+                    index=["dnn","faiss"].index(pr["technique"]),
+                    format_func=lambda t: TECHNIQUE_LABELS[t],
+                    captions=[TECHNIQUE_HELP["dnn"],TECHNIQUE_HELP["faiss"]])
+            st.caption("Sodium and blood-sugar limits, fish meals, plan style.")
+        _,mid,_=st.columns([1,1.3,1])
+        submitted=mid.form_submit_button("Create my 7-day plan",type="primary",width="stretch")
+    if submitted:
+        also=set(also or [])
+        st.session_state.profile=dict(age=age,sex=sex,kcal=kcal,diet=diet,allergens=allergens,
+            lact="lact" in also,gf="gf" in also,pork="pork" in also,conditions=conditions,
+            na=na,gi=gi,fish=fish,technique=technique)
+        with st.spinner("Building your 7-day plan..."):
+            make_plan(st.session_state.profile)
+        st.rerun()
+    if st.session_state.plan and st.session_state.view=="form":
+        _,mid,_=st.columns([1,1.3,1])
+        mid.button("← Back to my plan",on_click=lambda: st.session_state.update(view="plan"),
+                   width="stretch")
+    st.markdown('<p class="form-note">General meal-planning guidance, not medical advice. '
+                'If you have a health condition, check your plan with a dietitian or doctor.</p>',
+                unsafe_allow_html=True)
 
 if st.session_state.view!="plan" or not st.session_state.plan:
     profile_page()
