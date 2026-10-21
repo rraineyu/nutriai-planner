@@ -103,6 +103,41 @@ section[data-testid="stSidebar"]{
 /* metric native */
 [data-testid="stMetricValue"]{ font-family:'Fraunces',serif; color:var(--sage-deep); }
 hr{ border-color:var(--line); }
+
+/* ---- consolidated plan layout ---- */
+:root{ --sage-ink:#3F7652; --sage-ink-dark:#2E5A3D; }
+.summary-bar{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
+  gap:10px 24px; background:#fff; border:1px solid var(--line); border-radius:18px;
+  padding:14px 20px; margin:4px 0 14px; }
+.summary-bar .stats{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 22px; }
+.summary-bar b{ font-size:1.15rem; }
+.summary-bar .muted{ color:var(--ink-soft); }
+.flag{ padding:4px 10px; border-radius:999px; background:var(--peach-bg); color:#6B3A1A;
+  font-weight:700; font-size:.82rem; }
+.profile-note{ color:var(--ink-soft); font-size:.9rem; }
+.day-head{ display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline;
+  gap:6px; margin:8px 0 2px; }
+.day-head h2{ margin:0 !important; padding:0 !important; font-size:1.8rem !important; }
+.day-head span{ color:var(--ink-soft); font-size:.95rem; }
+.meal-tag{ display:inline-block; padding:3px 10px; border-radius:999px; font-size:.78rem; font-weight:700; }
+.meal-tag.Breakfast{ background:var(--peach-bg); color:#8A4A22; }
+.meal-tag.Lunch{ background:var(--sage-bg); color:var(--sage-ink-dark); }
+.meal-tag.Dinner{ background:var(--lavender-bg); color:#4B3F7A; }
+.meal-title{ font-weight:700; font-size:1.08rem; line-height:1.3; margin:8px 0 4px; min-height:2.6em; }
+.meal-meta{ color:var(--ink-soft); font-size:.9rem; margin-bottom:2px; }
+.portion-row{ display:flex; justify-content:space-between; gap:10px; padding:3px 0; font-size:.95rem; }
+.portion-row span:last-child{ color:var(--ink-soft); white-space:nowrap; }
+.snack-strip{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; padding:12px 16px;
+  border-radius:14px; background:#FCF8E8; border:1px solid #F0E6C2; margin-top:6px; }
+.snack-strip .meal-tag{ background:#F6E7B0; color:#5C4710; }
+.snack-strip .muted{ color:var(--ink-soft); }
+/* bordered containers = meal cards */
+[data-testid="stVerticalBlockBorderWrapper"]{ background:#fff; border-radius:18px !important; }
+/* day picker: equal-width pills, selected one in deep sage */
+[data-testid="stButtonGroup"] button{ border-radius:14px !important; min-height:46px; font-weight:700; }
+[data-testid="stButtonGroup"] button[aria-checked="true"],
+[data-testid="stButtonGroup"] button[kind="segmented_controlActive"]{
+  background:var(--sage-ink) !important; color:#fff !important; border-color:var(--sage-ink) !important; }
 </style>""", unsafe_allow_html=True)
 
 @st.cache_resource
@@ -170,7 +205,7 @@ def plan_fit_summary(persona, analysis):
         }
         parts.append("avoids " + ", ".join(readable.get(c, c) for c in persona.get("conditions", [])))
     if persona.get("allergens"):
-        parts.append("removes " + ", ".join(persona.get("allergens", [])) + " allergens")
+        parts.append("removes " + ", ".join(a.replace("_", " ") for a in persona.get("allergens", [])) + " allergens")
     if persona.get("lactose_free"):
         parts.append("keeps meals lactose-free")
     if persona.get("gluten_free"):
@@ -212,9 +247,18 @@ with st.sidebar:
     kcal=st.slider("Daily calorie goal",1200,3000,d["kcal"],50)
 
     st.markdown("### 2. Food preferences")
-    diet=st.selectbox("Diet",["nonveg","pescatarian","vegetarian","vegan"],
-                      index=["nonveg","pescatarian","vegetarian","vegan"].index(d["diet"]))
-    allergens=st.multiselect("Allergies to avoid",ALLERGEN_CHOICES,default=d["allergens"])
+    # Internal values stay the same for the engine; users see friendly labels.
+    DIET_LABELS={"nonveg":"No restrictions (eats everything)","pescatarian":"Pescatarian (fish, no meat)",
+                 "vegetarian":"Vegetarian","vegan":"Vegan"}
+    diet=st.selectbox("Diet",list(DIET_LABELS),
+                      index=list(DIET_LABELS).index(d["diet"]),
+                      format_func=lambda k: DIET_LABELS[k])
+    ALLERGEN_LABELS={"milk":"Milk","egg":"Egg","fish":"Fish","shellfish":"Shellfish",
+                     "tree_nut":"Tree nuts","peanut":"Peanuts","soy":"Soy",
+                     "wheat":"Wheat","gluten":"Gluten"}
+    allergens=st.multiselect("Allergies to avoid",ALLERGEN_CHOICES,default=d["allergens"],
+                             format_func=lambda k: ALLERGEN_LABELS.get(k, k.replace("_"," ").capitalize()),
+                             placeholder="None")
     # Two columns instead of three so labels don't get truncated ("Lacto…")
     cc1,cc2=st.columns(2)
     lact=cc1.checkbox("Lactose-free",d["lact"])
@@ -222,7 +266,10 @@ with st.sidebar:
     pork=cc1.checkbox("No pork",d["pork"])
 
     st.markdown("### 3. Health needs")
-    conditions=st.multiselect("Conditions",CONDS,default=d["conditions"])
+    COND_LABELS={"IBS":"IBS","GERD":"GERD / acid reflux","T2_Diabetes":"Type 2 diabetes",
+                 "Hypertension":"High blood pressure"}
+    conditions=st.multiselect("Conditions",CONDS,default=d["conditions"],
+                              format_func=lambda k: COND_LABELS.get(k,k),placeholder="None")
 
     with st.expander("Advanced settings"):
         st.caption("Optional. Use these if a doctor or dietitian has given you specific limits.")
@@ -254,6 +301,7 @@ if go:
     else:
         st.session_state.plan={"plan":plan,"log":log.__dict__,"analysis":an,
             "persona":persona.__dict__,"gt":gt,"technique":technique}
+        st.session_state.plan_day="Day 1"
         # Streamlit can't auto-close the sidebar, so nudge narrow-screen users
         st.toast("Your 7-day plan is ready! On mobile, close the sidebar (<<) to see it.", icon="✅")
 
@@ -279,9 +327,57 @@ def on_skip(day_num, meal):
     st.session_state.feedback_log.append((title, "skipped"))
     st.toast(f"Swapped Day {day_num} {meal.lower()}: {new_title}.", icon="🔄")
 
-tab_plan,tab_an,tab_excl=st.tabs(
-    ["My plan 📝 ","Nutrition 📊","Why excluded 🚫"])
+tab_plan,tab_an,tab_groc,tab_excl=st.tabs(
+    ["My plan 📝 ","Nutrition 📊","Grocery list 🛒","What we left out 🚫"])
 state=st.session_state.plan
+
+def _kcal(foods): return sum(float(f["energy_kcal"])*float(f["_scale"]) for f in foods)
+def _protein(foods): return sum(float(f["protein_g"])*float(f["_scale"]) for f in foods)
+
+def summary_bar(state):
+    """One line instead of four metric cards."""
+    an=state["analysis"]; da=an.get("daily_avg",{}); per=state["persona"]
+    goal=per.get("kcal_target") or 0
+    # Flag the nutrient that falls short on the most days (if it's a pattern, 3+ days)
+    days_low={}
+    for fl in an.get("rda_flags",[]):
+        if fl.get("nutrient") in UPPER_LIMIT_NUTRIENTS: continue
+        days_low.setdefault(fl["nutrient"],set()).add(fl["day"])
+    flag=""
+    if days_low:
+        nut,days=max(days_low.items(),key=lambda kv:len(kv[1]))
+        if len(days)>=3:
+            flag=f'<span class="flag">{nutrient_label(nut).split(" (")[0]} low on {len(days)} of 7 days</span>'
+    div=an.get("diversity_score")
+    div_txt=f' · variety {float(div):.2f}' if isinstance(div,(int,float)) else ""
+    diet=DIET_LABELS.get(per.get("diet"),"").split(" (")[0]
+    st.markdown(
+        f'<div class="summary-bar"><div class="stats">'
+        f'<span><b>{da.get("energy_kcal",0):,.0f}</b> <span class="muted">avg kcal of {goal:,}</span></span>'
+        f'<span><b>{da.get("protein_g",0):.0f} g</b> <span class="muted">protein</span></span>'
+        f'<span><b>{da.get("fiber_g",0):.0f} g</b> <span class="muted">fiber</span></span>{flag}</div>'
+        f'<div class="profile-note">{diet} · {goal:,} kcal{div_txt}</div></div>',
+        unsafe_allow_html=True)
+
+def meal_card(day_num, meal, foods, saved):
+    with st.container(border=True):
+        st.markdown(
+            f'<span class="meal-tag {meal}">{meal}</span>'
+            f'<div class="meal-title">{meal_title(meal, foods)}</div>'
+            f'<div class="meal-meta">{_kcal(foods):.0f} kcal · {_protein(foods):.0f} g protein</div>',
+            unsafe_allow_html=True)
+        with st.expander("Portions"):
+            st.markdown("".join(
+                f'<div class="portion-row"><span>{_clean_food_name(f)}</span><span>{portion_label(f)}</span></div>'
+                for f in foods), unsafe_allow_html=True)
+            is_saved = bool(foods) and all(f["_base_food"] in saved for f in foods)
+            b1,b2=st.columns(2)
+            b1.button("⭐ Saved" if is_saved else "⭐ Save", key=f"save_d{day_num}_{meal}",
+                      help="Use these foods more often in your plans",
+                      on_click=on_save, args=(day_num, meal), disabled=is_saved, width="stretch")
+            b2.button("🔄 Swap", key=f"swap_d{day_num}_{meal}",
+                      help="Replace this meal with a different one",
+                      on_click=on_skip, args=(day_num, meal), width="stretch")
 
 with tab_plan:
     if not state:
@@ -290,75 +386,39 @@ with tab_plan:
                 "On a phone or narrow window, tap the **>>** arrow at the top left to open the sidebar.")
     else:
         plan=state["plan"]; an=state["analysis"]
-        c1,c2,c3,c4=st.columns(4)
-        da=an.get("daily_avg",{})
-        kcal_goal=state["persona"].get("kcal_target")
-        c1.metric("Avg calories/day",f"{da.get('energy_kcal',0):,.0f}",
-                  f"goal {kcal_goal:,}" if kcal_goal else None,delta_color="off")
-        c2.metric("Avg protein/day",f"{da.get('protein_g',0):.0f} g")
-        c3.metric("Avg fiber/day",f"{da.get('fiber_g',0):.0f} g")
-        c4.metric("Fish meals",an.get("fish_meals",0))
-        # Small, right-aligned diversity score (kept subtle on purpose)
-        div=an.get("diversity_score")
-        if div is not None:
-            try: div_txt=f"{float(div):.2f}"
-            except (TypeError,ValueError): div_txt=str(div)
-            st.markdown(
-                f'<div style="text-align:right;font-size:0.8rem;color:var(--ink-soft);margin-top:-6px" '
-                f'title="How varied your foods are across the week. Higher means less repetition.">'
-                f'Diversity score: <b>{div_txt}</b></div>',
-                unsafe_allow_html=True)
-        st.success(plan_fit_summary(state["persona"], an))
-        st.caption("Tap **Swap** to replace any meal you don't like, or **Save** to see those foods more often.")
-        st.markdown("---")
+        summary_bar(state)
+
+        day_names=[f"Day {d['day']}" for d in plan]
+        if st.session_state.get("plan_day") not in day_names:
+            st.session_state.plan_day=day_names[0]
+        picked=st.segmented_control("Choose a day",day_names,key="plan_day",
+                                    label_visibility="collapsed",width="stretch")
+        day_num=int((picked or day_names[0]).split()[1])
+        day=plan[day_num-1]
+        all_foods=[f for fs in day["meals"].values() for f in fs]
+        st.markdown(f'<div class="day-head"><h2>Day {day_num}</h2>'
+                    f'<span>{_kcal(all_foods):,.0f} kcal · {_protein(all_foods):.0f} g protein</span></div>',
+                    unsafe_allow_html=True)
+
+        saved=set(st.session_state.saved_foods)
+        cols=st.columns(3)
+        for col,meal in zip(cols,("Breakfast","Lunch","Dinner")):
+            if meal in day["meals"]:
+                with col: meal_card(day_num, meal, day["meals"][meal], saved)
+        snack=day["meals"].get("Snack")
+        if snack:
+            st.markdown(f'<div class="snack-strip"><span class="meal-tag">Snack</span>'
+                        f'<b>{ingredient_line(snack)}</b><span class="muted">{_kcal(snack):.0f} kcal</span></div>',
+                        unsafe_allow_html=True)
+
+        st.caption("Open **Portions** to see amounts. **Swap** replaces a meal you don't like; "
+                   "**Save** shows those foods more often.")
+        st.markdown("")
         csvb=plan_to_csv(plan); pdfb=plan_to_pdf(plan,state["persona"],an)
         e1,e2=st.columns(2)
-        e1.download_button("⬇ Download CSV",csvb,"nutriai_plan.csv","text/csv",width="stretch")
-        e2.download_button("⬇ Download PDF",pdfb,"nutriai_plan.pdf","application/pdf",width="stretch")
-        st.markdown("---")
-        saved=set(st.session_state.saved_foods)
-        for day in plan:
-            st.markdown(f'<span class="daychip">Day {day["day"]}</span>',unsafe_allow_html=True)
-            cols=st.columns(3)
-            meal_style={"Breakfast":("🥣","var(--peach)"),
-                        "Lunch":("🥗","var(--sage)"),
-                        "Dinner":("🍲","var(--lavender)")}
-            main_meals=[(m,day["meals"][m]) for m in ("Breakfast","Lunch","Dinner") if m in day["meals"]]
-            for col,(meal,foods) in zip(cols,main_meals):
-                with col:
-                    emoji,accent=meal_style.get(meal,("🍽️","var(--sage)"))
-                    title = meal_title(meal, foods)
-                    total_kcal = sum(float(f["energy_kcal"])*float(f["_scale"]) for f in foods)
-                    total_protein = sum(float(f["protein_g"])*float(f["_scale"]) for f in foods)
-                    st.markdown(f"#### {emoji} {meal}")
-                    st.markdown(
-                        f'<div class="meal-card" style="border-left-color:{accent}">'
-                        f'<b style="font-size:1.05rem">{title}</b><br>'
-                        f'<small>{ingredient_line(foods)}</small><br>'
-                        f'<small>{total_kcal:.0f} kcal · {total_protein:.0f}g protein</small>'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
-                    is_saved = bool(foods) and all(f["_base_food"] in saved for f in foods)
-                    b1, b2 = st.columns(2)
-                    b1.button("⭐ Saved" if is_saved else "⭐ Save",
-                              key=f"save_d{day['day']}_{meal}",
-                              help="Use these foods more often in your plans",
-                              on_click=on_save, args=(day["day"], meal),
-                              disabled=is_saved, width="stretch")
-                    b2.button("🔄 Swap",
-                              key=f"swap_d{day['day']}_{meal}",
-                              help="Replace this meal with a different one",
-                              on_click=on_skip, args=(day["day"], meal),
-                              width="stretch")
-            snack=day["meals"].get("Snack")
-            if snack:
-                skcal=sum(float(f["energy_kcal"])*float(f["_scale"]) for f in snack)
-                st.markdown(
-                    f'<div style="margin-top:6px;font-size:0.9rem;color:var(--ink-soft)">'
-                    f'🍎 <b>Snack:</b> {ingredient_line(snack)} · {skcal:.0f} kcal</div>',
-                    unsafe_allow_html=True)
-            st.markdown("")
+        e1.download_button("⬇ Download PDF (full week)",pdfb,"nutriai_plan.pdf","application/pdf",width="stretch")
+        e2.download_button("⬇ Download CSV",csvb,"nutriai_plan.csv","text/csv",width="stretch")
+
         if st.session_state.feedback_log:
             with st.expander("🧠 Your feedback"):
                 st.caption("Saved foods show up more often in your next plans. "
@@ -423,11 +483,49 @@ with tab_an:
                        "vegan/lactose-free diets - flags here are informational.")
         else: st.success("All tracked nutrients meet >=80% RDA every day.")
 
+AISLES={"Protein":"Protein","Vegetables":"Produce","Fruits":"Produce","Grains":"Grains & bread",
+        "Dairy":"Dairy & milks","Fats":"Pantry"}
+def grocery_list(plan):
+    """Total each food across the week, grouped by store aisle."""
+    totals={}
+    for d in plan:
+        for fs in d["meals"].values():
+            for f in fs:
+                b=f["_base_food"]
+                if b not in totals:
+                    totals[b]={"name":short_food_name(f["name"]),"g":0.0,
+                               "aisle":AISLES.get(str(f.get("food_group","")),"Other")}
+                totals[b]["g"]+=float(f.get("portion_g",0))
+    by_aisle={}
+    for b,t in totals.items():
+        amt=portion_label({"_base_food":b,"portion_g":t["g"]})
+        if amt.endswith(" g") and t["g"]>=1000:
+            amt=f"{t['g']/1000:.1f} kg"
+        by_aisle.setdefault(t["aisle"],[]).append((t["name"],amt,b))
+    order=["Produce","Protein","Grains & bread","Dairy & milks","Pantry","Other"]
+    return [(a,sorted(by_aisle[a])) for a in order if a in by_aisle]
+
+with tab_groc:
+    if not state:
+        st.info("Create a plan to get your grocery list.")
+    else:
+        groups=grocery_list(state["plan"])
+        n=sum(len(items) for _,items in groups)
+        st.markdown("### Grocery list")
+        st.caption(f"{n} items for the whole week, grouped by aisle. Check things off as you shop.")
+        cols=st.columns(3)
+        for i,(aisle,items) in enumerate(groups):
+            with cols[i%3]:
+                with st.container(border=True):
+                    st.markdown(f"**{aisle}**")
+                    for name,amt,b in items:
+                        st.checkbox(f"{name} · {amt}",key=f"groc_{b}")
+
 with tab_excl:
     if not state: st.info("Generate a plan to see exclusion explanations.")
     else:
         log=state["log"]
-        st.markdown("### Why foods were excluded")
+        st.markdown("### What we left out")
         st.caption("This explains what the app removed before building your plan, based on your selections.")
         for stage,label in [("clinical","🩺 Clinical condition"),("allergy","⚠️ Allergen / intolerance"),
                             ("diet","🥬 Diet preference"),("skipped","🔄 Foods you swapped out")]:
